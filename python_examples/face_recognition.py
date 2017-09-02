@@ -117,7 +117,34 @@ for f in glob.glob(os.path.join(faces_folder_path, "*.jpg")):
         # middle value, such as 10, which is only 10x slower but still gets an
         # LFW accuracy of 99.3%.
 
-
         dlib.hit_enter_to_continue()
 
 
+        # ----------- alternative usages ------------
+
+        # Usage 1:
+        # This builds a full_object_detections object which contains the landmarks for all the faces in an image
+        # The embeddings for the faces are then calculated in one go (this is more efficient when using CUDA)
+        # Note the s at the end of detection signifying that this is a list of landmarks
+        
+        # landmarks = dlib.full_object_detections()
+        # landmarks.extend([
+        #     sp(img, d) for d in dets
+        # ])
+
+        # face_descriptors = facerec.compute_face_descriptor(img, landmarks) 
+
+        # Usage 2:
+        # It is also possible to infer the embeddings for faces contained in multiple images:
+        # face descriptors will be a 2d list of embeddings of shape (len(imgs), # faces per image, 128)
+        # Note the two ss at the end of detections, this is a 2d list of landmarks
+
+        # detections = [detector(img) for img in imgs]
+        # landmarks = dlib.full_object_detectionss()
+        # for dets, img in zip(detections, imgs):
+        #     tmp = dlib.full_object_detections()
+        #     tmp.extend([
+        #         sp(img, d) for d in dets
+        #     ])
+        #     landmarks.append(tmp)
+        # face_descriptors = facerec.compute_face_descriptors(imgs, landmarks)

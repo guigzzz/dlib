@@ -66,6 +66,7 @@ public:
         std::vector<chip_details> dets;
         for (auto& f : faces)
             dets.push_back(get_face_chip_details(f, 150, 0.25));
+
         dlib::array<matrix<rgb_pixel>> face_chips;
         extract_image_chips(numpy_rgb_image(img), dets, face_chips);
 
@@ -85,6 +86,106 @@ public:
         }
 
         return face_descriptors;
+    }
+
+    std::vector<std::vector<matrix<double,0,1>>> compute_face_descriptorss (
+        boost::python::list& imgs,
+        const std::vector<std::vector<full_object_detection> >& all_faces,
+        const int num_jitters,
+        const int batch_size = 16
+    )
+    {
+        std::vector<numpy_rgb_image> dimgs;
+        dimgs.reserve(len(imgs));
+
+
+        // extract images from python list
+        // while also check that they are RGB
+        for(int i = 0; i < len(imgs); i++)
+        {
+            matrix<rgb_pixel> image;
+            object tmp = boost::python::extract<object>(imgs[i]);
+            if (!is_rgb_python_image(tmp))
+                throw dlib::error("Unsupported image type, must be RGB image.");
+                
+            dimgs.push_back(numpy_rgb_image(tmp));
+        }
+
+        std::cout << std::endl << "images ok" << std::endl;
+
+        // check that landmarks use the right format
+        // also count faces per frame and total number of faces
+        int total_faces = 0;
+        std::vector<int> faces_per_frame;
+        for(auto& faces : all_faces)
+        {
+            for (auto& f : faces)
+            {
+                if (f.num_parts() != 68)
+                    throw dlib::error("The full_object_detection must use the iBUG 300W 68 point face landmark style.");
+            }
+            faces_per_frame.push_back(faces.size());
+            total_faces += faces.size();
+        }
+
+        std::cout << "landmarks ok" << std::endl;
+      
+        //get face chip details for all faces in all images
+        std::vector<matrix<rgb_pixel>> face_chips(total_faces);
+        for (int i = 0; i < dimgs.size(); i++)
+        {
+            std::cout << i << std::endl;
+            std::vector<chip_details> dets(all_faces[i].size());
+            
+            std::cout << all_faces[i].size() << std::endl;
+
+            for (auto& f : all_faces[i])
+            {
+                dets.push_back(get_face_chip_details(f, 150, 0.25));
+            }
+
+            std::cout << "chips ok, " << dets.size() << std::endl;
+    
+            dlib::array<matrix<rgb_pixel>> image_face_chips;
+            extract_image_chips(dimgs[i], dets, image_face_chips);
+
+            std::cout << "extract ok" << std::endl;
+
+            for(auto& chip : image_face_chips)
+                face_chips.push_back(chip);
+        }
+
+        std::cout << "face chips" << std::endl;
+
+        std::vector<matrix<double,0,1>> face_descriptors(face_chips.size());
+        if (num_jitters <= 1)
+        {
+            // extract descriptors and convert from float vectors to double vectors
+            for (auto& d : net(face_chips, batch_size))
+                face_descriptors.push_back(matrix_cast<double>(d));
+        }
+        else
+        {
+            for (auto& fimg : face_chips)
+                face_descriptors.push_back(matrix_cast<double>(mean(mat(net(jitter_image(fimg,num_jitters),16)))));
+        }
+
+        std::cout << "descriptors ok" << std::endl;
+
+        //turn vector of embeddings into 2D vector of embeddings divided up by frame
+        std::vector<std::vector<matrix<double,0,1>>> formatted_descriptors(dimgs.size());
+        int current_offset = 0;
+        for(int i = 0; i < dimgs.size(); i++)
+        {
+            formatted_descriptors[i].reserve(faces_per_frame[i]);
+            for(int j = 0; j < faces_per_frame[i]; j++)
+                formatted_descriptors[i].push_back(face_descriptors[current_offset + j]);
+            current_offset += faces_per_frame[i];
+        }
+
+        std::cout << "returning" << std::endl;
+
+        return formatted_descriptors;
     }
 
 private:
@@ -155,12 +256,23 @@ void bind_face_recognition()
         .def("compute_face_descriptor", &face_recognition_model_v1::compute_face_descriptors, (arg("img"),arg("faces"),arg("num_jitters")=0),
             "Takes an image and an array of full_object_detections that reference faces in that image and converts them into 128D face descriptors.  "
             "If num_jitters>1 then each face will be randomly jittered slightly num_jitters times, each run through the 128D projection, and the average used as the face descriptor."
+            )
+        .def("compute_face_descriptor", &face_recognition_model_v1::compute_face_descriptorss, (arg("imgs"),arg("facess"),arg("num_jitters")=0,arg("batch_size")=16),
+            "Takes an list of images and a 2D array of full_object_detections that reference faces in the images and converts them into 128D face descriptors.  "
+            "If num_jitters>1 then each face will be randomly jittered slightly num_jitters times, each run through the 128D projection, and the average used as the face descriptor."
             );
     }
-
     {
     typedef std::vector<full_object_detection> type;
     class_<type>("full_object_detections", "An array of full_object_detection objects.")
+        .def(vector_indexing_suite<type>())
+        .def("clear", &type::clear)
+        .def("resize", resize<type>)
+        .def_pickle(serialize_pickle<type>());
+    }
+    {
+    typedef std::vector<std::vector<full_object_detection> > type;
+    class_<type>("full_object_detectionss", "An array of full_object_detection objects.")
         .def(vector_indexing_suite<type>())
         .def("clear", &type::clear)
         .def("resize", resize<type>)
